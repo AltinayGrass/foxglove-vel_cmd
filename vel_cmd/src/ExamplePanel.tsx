@@ -194,18 +194,18 @@ function ExamplePanel({ context }: { context: PanelExtensionContext }): JSX.Elem
     const startPoint = startPointRef.current;
     const lastPoint = lastPointRef.current;
 
-    lastPoint.x = (lastPoint.x + startPoint.x) / 2.0;
-    lastPoint.y = (lastPoint.y + startPoint.y) / 2.0;
+    lastPoint.x = lastPoint.x * 0.9 + startPoint.x * 0.1;
+    lastPoint.y = lastPoint.y * 0.9 + startPoint.y * 0.1;
 
-    const x = 0; //startPoint.x - lastPoint.x;
-    const y = 0; //startPoint.y - lastPoint.y;
+    const x = startPoint.x - lastPoint.x;
+    const y = startPoint.y - lastPoint.y;
     // X
     const resultX = (x / 100) * 1.5707;
     // Y
     const resultY = (y / 100) * 1.0;
     createAndPublishMessage(resultY * config.maxLinearSpeed, resultX * config.maxAngularSpeed);
 
-    if (Math.abs(resultY) < 0.05 && nextCmdIntervalSlowDownId.current) {
+    if (Math.abs(resultY) < 0.0005 && nextCmdIntervalSlowDownId.current) {
       clearInterval(nextCmdIntervalSlowDownId.current);
       nextCmdIntervalSlowDownId.current = null;
     }
@@ -243,6 +243,9 @@ function ExamplePanel({ context }: { context: PanelExtensionContext }): JSX.Elem
     nippleManagerRef.current.on("start", (_, data) => {
       startPointRef.current = data.position;
       nextCmdIntervalId.current = setInterval(cmdMove, 1000 / config.publishRate);
+      if (nextCmdIntervalSlowDownId.current) {
+        clearInterval(nextCmdIntervalSlowDownId.current);
+      }
     });
     // nipple_move
     nippleManagerRef.current.on("move", (_, data) => {
