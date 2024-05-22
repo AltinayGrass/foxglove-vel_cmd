@@ -1,0 +1,10 @@
+{
+  "dependencies": {
+    "lodash": "^4.17.21"
+  },
+  "devDependencies": {
+    "@types/lodash": "^4.17.4",
+    "nipplejs": "^0.10.2",
+    "ts-essentials": "^10.0.0"
+  }
+}
