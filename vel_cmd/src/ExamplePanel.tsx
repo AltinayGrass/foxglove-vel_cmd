@@ -22,6 +22,9 @@ type Config = {
   maxLinearSpeed: number;
   maxAngularSpeed: number;
 };
+const VEL_CMD_SCHEMA_ROS_1 = "std_msgs/Float64MultiArray";
+const VEL_CMD_SCHEMA_ROS_2 = "std_msgs/msg/Float64MultiArray";
+const ALL_VEL_CMD_SCHEMAS = [VEL_CMD_SCHEMA_ROS_1, VEL_CMD_SCHEMA_ROS_2];
 
 function buildSettingsTree(config: Config, topics: readonly Topic[]): SettingsTreeNodes {
   const general: SettingsTreeNode = {
@@ -52,11 +55,20 @@ function buildSettingsTree(config: Config, topics: readonly Topic[]): SettingsTr
   return { general };
 }
 
-const VEL_CMD_SCHEMA_ROS_1 = "std_msgs/Float64MultiArray";
-const VEL_CMD_SCHEMA_ROS_2 = "std_msgs/msg/Float64MultiArray";
-
+function createFloat64MultiArray(data: Float64Array): std_msg__Float64MultiArray {
+  return {
+    layout: {
+      dim: {
+        label: "",
+        size: 0,
+        stride: 0,
+      },
+      data_offset: 0,
+    },
+    data,
+  };
+}
 function ExamplePanel({ context }: { context: PanelExtensionContext }): JSX.Element {
-
   const [config, setConfig] = useState<Config>(() => {
     const partialConfig = context.initialState as Config;
     const { publishRate = 5, maxLinearSpeed = 1, maxAngularSpeed = 1, ...rest } = partialConfig;
@@ -74,10 +86,10 @@ function ExamplePanel({ context }: { context: PanelExtensionContext }): JSX.Elem
     const initialState = context.initialState as Config;
     return initialState.topic && initialState.messageSchema
       ? {
-        name: initialState.topic,
-        schemaName: initialState.messageSchema,
-        datatype: initialState.messageSchema,
-      }
+          name: initialState.topic,
+          schemaName: initialState.messageSchema,
+          datatype: initialState.messageSchema,
+        }
       : undefined;
   });
   const currentTopicRef = React.useRef<Topic | void>();
@@ -92,8 +104,10 @@ function ExamplePanel({ context }: { context: PanelExtensionContext }): JSX.Elem
 
   const { saveState } = context;
 
-
   const [colorScheme, setColorScheme] = useState<"dark" | "light">("light");
+
+  const startPointRef = React.useRef<Position>({ x: 0, y: 0 });
+  const lastPointRef = React.useRef<Position>({ x: 0, y: 0 });
 
   const advertiseTopic = useCallback(
     (topic: Topic) => {
@@ -120,7 +134,6 @@ function ExamplePanel({ context }: { context: PanelExtensionContext }): JSX.Elem
       }
     };
   });
-
 
   const settingsActionHandler = useCallback(
     (action: SettingsTreeAction) => {
@@ -157,124 +170,61 @@ function ExamplePanel({ context }: { context: PanelExtensionContext }): JSX.Elem
     [topics],
   );
 
-  let startPoint: Position;
-  let lastPoint: Position;
+  const createAndPublishMessage = useCallback(
+    (linearSpeed: number, angularSpeed: number) => {
+      const linearVec = createFloat64MultiArray(new Float64Array([linearSpeed]));
+      const angularVec = createFloat64MultiArray(new Float64Array([angularSpeed]));
 
+      let message: std_msg__Float64MultiArray;
+      const schemaName = currentTopicRef.current?.schemaName ?? "";
+      if (ALL_VEL_CMD_SCHEMAS.includes(schemaName)) {
+        message = angularVec;
+        message = linearVec;
+      } else {
+        console.error("Unknown message schema");
+        return;
+      }
+      if (currentTopicRef.current?.name) {
+        context.publish?.(currentTopicRef.current.name, message);
+      }
+    },
+    [context],
+  );
   const cmdSlowDown = React.useCallback(() => {
+    const startPoint = startPointRef.current;
+    const lastPoint = lastPointRef.current;
 
-    lastPoint.x=(lastPoint.x + startPoint.x)/2.0;
-    lastPoint.y=(lastPoint.y + startPoint.y)/2.0;
-  
-    const x = 0;//startPoint.x - lastPoint.x;
-    const y = 0;//startPoint.y - lastPoint.y;
-    // X 
+    lastPoint.x = (lastPoint.x + startPoint.x) / 2.0;
+    lastPoint.y = (lastPoint.y + startPoint.y) / 2.0;
+
+    const x = 0; //startPoint.x - lastPoint.x;
+    const y = 0; //startPoint.y - lastPoint.y;
+    // X
     const resultX = (x / 100) * 1.5707;
-    // Y 
+    // Y
     const resultY = (y / 100) * 1.0;
+    createAndPublishMessage(resultY * config.maxLinearSpeed, resultX * config.maxAngularSpeed);
 
-
-    const linearSpeed = new Float64Array(1);
-    linearSpeed[0] = resultY * config.maxLinearSpeed;
-    const angularSpeed = new Float64Array(1);
-    angularSpeed[0] = resultX * config.maxAngularSpeed;
-   
-    const linearVec: std_msg__Float64MultiArray = {
-      layout: {
-            dim:{
-            label: "",
-            size: 0,
-            stride: 0
-      },
-      data_offset: 0
-      },
-      data: linearSpeed };
-
-    const angularVec: std_msg__Float64MultiArray = {
-      layout: {
-            dim:{
-            label: "",
-            size: 0,
-            stride: 0
-      },
-      data_offset: 0
-      },
-      data: angularSpeed
-    };
-    let message: std_msg__Float64MultiArray;
-    const schemaName = currentTopicRef.current?.schemaName ?? "";
-    if ([VEL_CMD_SCHEMA_ROS_1, VEL_CMD_SCHEMA_ROS_2].includes(schemaName)) {
-      message = angularVec;
-      message = linearVec;
-    } else {
-      console.error("Unknown message schema");
-      return;
-    }
-    if (currentTopicRef.current?.name) {
-      context.publish?.(currentTopicRef.current.name, message);
-    }
-    if (Math.abs(resultY)<0.05 && nextCmdIntervalSlowDownId.current)
-    {
+    if (Math.abs(resultY) < 0.05 && nextCmdIntervalSlowDownId.current) {
       clearInterval(nextCmdIntervalSlowDownId.current);
       nextCmdIntervalSlowDownId.current = null;
     }
-  }, [config, context]);
-
+  }, [config.maxAngularSpeed, config.maxLinearSpeed, context, createAndPublishMessage]);
 
   const cmdMove = React.useCallback(() => {
     if (!nextCmdPt.current) {
       return;
     }
     const [lx, az] = nextCmdPt.current;
-    const linearSpeed = new Float64Array(1);
-    linearSpeed[0] = lx * config.maxLinearSpeed;
-    const angularSpeed = new Float64Array(1);
-    angularSpeed[0] = az * config.maxAngularSpeed;
-   
 
-    const linearVec: std_msg__Float64MultiArray = {
-      layout: {
-            dim:{
-            label: "",
-            size: 0,
-            stride: 0
-      },
-      data_offset: 0
-      },
-      data: linearSpeed };
-
-    const angularVec: std_msg__Float64MultiArray = {
-      layout: {
-            dim:{
-            label: "",
-            size: 0,
-            stride: 0
-      },
-      data_offset: 0
-      },
-      data: angularSpeed
-    };
-
-
-    let message: std_msg__Float64MultiArray;
-    const schemaName = currentTopicRef.current?.schemaName ?? "";
-    if ([VEL_CMD_SCHEMA_ROS_1, VEL_CMD_SCHEMA_ROS_2].includes(schemaName)) {
-      message = angularVec;
-      message = linearVec;
-    } else {
-      console.error("Unknown message schema");
-      return;
-    }
-    if (currentTopicRef.current?.name) {
-      context.publish?.(currentTopicRef.current.name, message);
-    }
-  }, [config, context]);
+    createAndPublishMessage(lx * config.maxLinearSpeed, az * config.maxAngularSpeed);
+  }, [config.maxAngularSpeed, config.maxLinearSpeed, context, createAndPublishMessage]);
 
   const initNipple = React.useCallback(() => {
     // Destroy any previous nipple elements
     if (nippleManagerRef.current) {
       nippleManagerRef.current.destroy();
     }
-
 
     // nipple
     const options: JoystickManagerOptions = {
@@ -291,32 +241,32 @@ function ExamplePanel({ context }: { context: PanelExtensionContext }): JSX.Elem
 
     // nipple_start
     nippleManagerRef.current.on("start", (_, data) => {
-      startPoint = data.position;
+      startPointRef.current = data.position;
       nextCmdIntervalId.current = setInterval(cmdMove, 1000 / config.publishRate);
     });
     // nipple_move
     nippleManagerRef.current.on("move", (_, data) => {
-      const x = startPoint.x - data.position.x;
-      const y = startPoint.y - data.position.y;
-      // X 
+      const x = startPointRef.current.x - data.position.x;
+      const y = startPointRef.current.y - data.position.y;
+      // X
       const resultX = (x / 100) * 1.5707;
-      // Y 
+      // Y
       const resultY = (y / 100) * 1.0;
       nextCmdPt.current = [resultY, resultX];
-      lastPoint = data.position;
+      lastPointRef.current = data.position;
     });
 
     // nipple_end
     nippleManagerRef.current.on("end", () => {
       // 停车
-            
+
       if (nextCmdIntervalId.current) {
         clearInterval(nextCmdIntervalId.current);
         nextCmdIntervalId.current = null;
       }
       nextCmdIntervalSlowDownId.current = setInterval(cmdSlowDown, 1000 / config.publishRate);
     });
-  }, [colorScheme, cmdMove, config.publishRate]);
+  }, [colorScheme, cmdMove, config.publishRate, cmdSlowDown]);
 
   useEffect(() => {
     initNipple();
@@ -342,7 +292,7 @@ function ExamplePanel({ context }: { context: PanelExtensionContext }): JSX.Elem
     //
     // The render handler could be invoked as often as 60hz during playback if fields are changing often.
 
-    context.onRender = (renderState: RenderState, done:() => void) => {
+    context.onRender = (renderState: RenderState, done: () => void) => {
       // render functions receive a _done_ callback. You MUST call this callback to indicate your panel has finished rendering.
       // Your panel will not receive another render callback until _done_ is called from a prior render. If your panel is not done
       // rendering before the next render call, studio shows a notification to the user that your panel is delayed.
@@ -353,16 +303,10 @@ function ExamplePanel({ context }: { context: PanelExtensionContext }): JSX.Elem
       // We may have new topics - since we are also watching for messages in the current frame, topics may not have changed
       // It is up to you to determine the correct action when state has not changed.
 
-
       setTopics(
-        renderState.topics?.filter(({ schemaName }) => {
-          return [
-            VEL_CMD_SCHEMA_ROS_1,
-            VEL_CMD_SCHEMA_ROS_2,
-          ].includes(schemaName);
-        }) ?? [],
+        renderState.topics?.filter(({ schemaName }) => ALL_VEL_CMD_SCHEMAS.includes(schemaName)) ??
+          [],
       );
-      
       if (renderState.colorScheme) {
         setColorScheme(renderState.colorScheme);
       }
