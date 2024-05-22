@@ -85,7 +85,7 @@ function ExamplePanel({ context }: { context: PanelExtensionContext }): JSX.Elem
 
   const nextCmdPt = React.useRef<[number, number] | null>(null);
   const nextCmdIntervalId = React.useRef<ReturnType<typeof setInterval> | null>(null);
-  //const nextCmdIntervalSlowDownId = React.useRef<ReturnType<typeof setInterval> | null>(null);
+  const nextCmdIntervalSlowDownId = React.useRef<ReturnType<typeof setInterval> | null>(null);
 
   const [renderDone, setRenderDone] = useState<(() => void) | undefined>();
   const nippleManagerRef = React.useRef<nipplejs.JoystickManager | null>(null);
@@ -115,9 +115,9 @@ function ExamplePanel({ context }: { context: PanelExtensionContext }): JSX.Elem
       if (nextCmdIntervalId.current) {
         clearInterval(nextCmdIntervalId.current);
       }
-      // if (nextCmdIntervalSlowDownId.current) {
-      //   clearInterval(nextCmdIntervalSlowDownId.current);
-      // }
+      if (nextCmdIntervalSlowDownId.current) {
+        clearInterval(nextCmdIntervalSlowDownId.current);
+      }
     };
   });
 
@@ -157,51 +157,67 @@ function ExamplePanel({ context }: { context: PanelExtensionContext }): JSX.Elem
     [topics],
   );
 
-  // const cmdSlowDown = React.useCallback(() => {
-  //   if (!nextCmdPt.current) {
-  //     return;
-  //   }
-  //   const [lx, az] = nextCmdPt.current;
-  //   const linearSpeed = new Float64Array(1);
-  //   linearSpeed[0] = lx * config.maxLinearSpeed;
-  //   const angularSpeed = new Float64Array(1);
-  //   angularSpeed[0] = az * config.maxAngularSpeed;
-   
-  //   const linearVec: std_msg__Float64MultiArray = {
-  //     layout: {
-  //           dim:{
-  //           label: "",
-  //           size: 0,
-  //           stride: 0
-  //     },
-  //     data_offset: 0
-  //     },
-  //     data: linearSpeed };
+  let startPoint: Position;
+  let lastPoint: Position;
 
-  //   const angularVec: std_msg__Float64MultiArray = {
-  //     layout: {
-  //           dim:{
-  //           label: "",
-  //           size: 0,
-  //           stride: 0
-  //     },
-  //     data_offset: 0
-  //     },
-  //     data: angularSpeed
-  //   };
-  //   let message: std_msg__Float64MultiArray;
-  //   const schemaName = currentTopicRef.current?.schemaName ?? "";
-  //   if ([VEL_CMD_SCHEMA_ROS_1, VEL_CMD_SCHEMA_ROS_2].includes(schemaName)) {
-  //     message = angularVec;
-  //     message = linearVec;
-  //   } else {
-  //     console.error("Unknown message schema");
-  //     return;
-  //   }
-  //   if (currentTopicRef.current?.name) {
-  //     context.publish?.(currentTopicRef.current.name, message);
-  //   }
-  // }, [config, context]);
+  const cmdSlowDown = React.useCallback(() => {
+
+    lastPoint.x=(lastPoint.x + startPoint.x)/2.0;
+    lastPoint.y=(lastPoint.y + startPoint.y)/2.0;
+  
+    const x = 0;//startPoint.x - lastPoint.x;
+    const y = 0;//startPoint.y - lastPoint.y;
+    // X 
+    const resultX = (x / 100) * 1.5707;
+    // Y 
+    const resultY = (y / 100) * 1.0;
+
+
+    const linearSpeed = new Float64Array(1);
+    linearSpeed[0] = resultY * config.maxLinearSpeed;
+    const angularSpeed = new Float64Array(1);
+    angularSpeed[0] = resultX * config.maxAngularSpeed;
+   
+    const linearVec: std_msg__Float64MultiArray = {
+      layout: {
+            dim:{
+            label: "",
+            size: 0,
+            stride: 0
+      },
+      data_offset: 0
+      },
+      data: linearSpeed };
+
+    const angularVec: std_msg__Float64MultiArray = {
+      layout: {
+            dim:{
+            label: "",
+            size: 0,
+            stride: 0
+      },
+      data_offset: 0
+      },
+      data: angularSpeed
+    };
+    let message: std_msg__Float64MultiArray;
+    const schemaName = currentTopicRef.current?.schemaName ?? "";
+    if ([VEL_CMD_SCHEMA_ROS_1, VEL_CMD_SCHEMA_ROS_2].includes(schemaName)) {
+      message = angularVec;
+      message = linearVec;
+    } else {
+      console.error("Unknown message schema");
+      return;
+    }
+    if (currentTopicRef.current?.name) {
+      context.publish?.(currentTopicRef.current.name, message);
+    }
+    if (Math.abs(resultY)<0.05 && nextCmdIntervalSlowDownId.current)
+    {
+      clearInterval(nextCmdIntervalSlowDownId.current);
+      nextCmdIntervalSlowDownId.current = null;
+    }
+  }, [config, context]);
 
 
   const cmdMove = React.useCallback(() => {
@@ -258,8 +274,7 @@ function ExamplePanel({ context }: { context: PanelExtensionContext }): JSX.Elem
     if (nippleManagerRef.current) {
       nippleManagerRef.current.destroy();
     }
-    let startPoint: Position;
-    //let lastPoint: Position;
+
 
     // nipple
     const options: JoystickManagerOptions = {
@@ -288,30 +303,18 @@ function ExamplePanel({ context }: { context: PanelExtensionContext }): JSX.Elem
       // Y 
       const resultY = (y / 100) * 1.0;
       nextCmdPt.current = [resultY, resultX];
-      //lastPoint = data.position;
+      lastPoint = data.position;
     });
 
     // nipple_end
     nippleManagerRef.current.on("end", () => {
       // 停车
-      
-    //  const x = 0;//startPoint.x - lastPoint.x;
-    //  const y = 0;//startPoint.y - lastPoint.y;
-      // X 
-    //  const resultX = (x / 100) * 1.5707;
-      // Y 
-    //  const resultY = (y / 100) * 1.0;
-
-    //nextCmdPt.current = [resultY, resultX];
-
-     // lastPoint.x=(lastPoint.x + startPoint.x)/2.0;
-    // lastPoint.y=(lastPoint.y + startPoint.y)/2.0;
-      
+            
       if (nextCmdIntervalId.current) {
         clearInterval(nextCmdIntervalId.current);
         nextCmdIntervalId.current = null;
       }
-      //nextCmdIntervalSlowDownId.current = setInterval(cmdSlowDown, 1000 / config.publishRate);
+      nextCmdIntervalSlowDownId.current = setInterval(cmdSlowDown, 1000 / config.publishRate);
     });
   }, [colorScheme, cmdMove, config.publishRate]);
 
