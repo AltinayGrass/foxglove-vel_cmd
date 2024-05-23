@@ -21,6 +21,7 @@ type Config = {
   publishRate: number;
   maxLinearSpeed: number;
   maxAngularSpeed: number;
+  slowDownTime: number;
 };
 const VEL_CMD_SCHEMA_ROS_1 = "std_msgs/Float64MultiArray";
 const VEL_CMD_SCHEMA_ROS_2 = "std_msgs/msg/Float64MultiArray";
@@ -49,6 +50,7 @@ function buildSettingsTree(config: Config, topics: readonly Topic[]): SettingsTr
       publishRate: { label: "Publish rate", input: "number", value: config.publishRate },
       maxLinearSpeed: { label: "Max linear", input: "number", value: config.maxLinearSpeed },
       maxAngularSpeed: { label: "Max angular", input: "number", value: config.maxAngularSpeed },
+      slowDownTime: { label: "Slow down time", input: "number", value: config.slowDownTime },
     },
   };
 
@@ -71,13 +73,20 @@ function createFloat64MultiArray(data: Float64Array): std_msg__Float64MultiArray
 function ExamplePanel({ context }: { context: PanelExtensionContext }): JSX.Element {
   const [config, setConfig] = useState<Config>(() => {
     const partialConfig = context.initialState as Config;
-    const { publishRate = 5, maxLinearSpeed = 1, maxAngularSpeed = 1, ...rest } = partialConfig;
+    const {
+      publishRate = 5,
+      maxLinearSpeed = 1,
+      maxAngularSpeed = 1,
+      slowDownTime = 1,
+      ...rest
+    } = partialConfig;
 
     return {
       ...rest,
       publishRate,
       maxLinearSpeed,
       maxAngularSpeed,
+      slowDownTime,
     };
   });
 
@@ -103,11 +112,14 @@ function ExamplePanel({ context }: { context: PanelExtensionContext }): JSX.Elem
   const nippleManagerRef = React.useRef<nipplejs.JoystickManager | null>(null);
 
   const { saveState } = context;
-
+  const currentStep = React.useRef(0);
   const [colorScheme, setColorScheme] = useState<"dark" | "light">("light");
 
   const startPointRef = React.useRef<Position>({ x: 0, y: 0 });
   const lastPointRef = React.useRef<Position>({ x: 0, y: 0 });
+  const slowDownPointRef = React.useRef<Position>({ x: 0, y: 0 });
+  const diffXRef = React.useRef(0);
+  const difYRef = React.useRef(0);
 
   const advertiseTopic = useCallback(
     (topic: Topic) => {
@@ -154,7 +166,9 @@ function ExamplePanel({ context }: { context: PanelExtensionContext }): JSX.Elem
         if (newConfig.maxAngularSpeed < 0) {
           newConfig.maxAngularSpeed = 0;
         }
-
+        if (newConfig.slowDownTime < 0) {
+          newConfig.slowDownTime = 0;
+        }
         // eslint-disable-next-line no-warning-comments
         // TODO: Error checking here to see if topic actually exists?
         const newTopic = topics.find((topic) => topic.name === newConfig.topic);
@@ -194,22 +208,35 @@ function ExamplePanel({ context }: { context: PanelExtensionContext }): JSX.Elem
     const startPoint = startPointRef.current;
     const lastPoint = lastPointRef.current;
 
-    lastPoint.x = lastPoint.x * 0.9 + startPoint.x * 0.1;
-    lastPoint.y = lastPoint.y * 0.9 + startPoint.y * 0.1;
+    const slowDownTime = config.slowDownTime;
+    const interval = 1000 / config.publishRate;
+    const steps = slowDownTime * config.publishRate;
 
-    const x = startPoint.x - lastPoint.x;
-    const y = startPoint.y - lastPoint.y;
-    // X
-    const resultX = (x / 100) * 1.5707;
-    // Y
-    const resultY = (y / 100) * 1.0;
-    createAndPublishMessage(resultY * config.maxLinearSpeed, resultX * config.maxAngularSpeed);
-
-    if (Math.abs(resultY) < 0.0005 && nextCmdIntervalSlowDownId.current) {
+    if (nextCmdIntervalSlowDownId.current) {
       clearInterval(nextCmdIntervalSlowDownId.current);
-      nextCmdIntervalSlowDownId.current = null;
     }
-  }, [config.maxAngularSpeed, config.maxLinearSpeed, context, createAndPublishMessage]);
+
+    currentStep.current = 0;
+
+    nextCmdIntervalSlowDownId.current = setInterval(() => {
+      if (currentStep.current < steps) {
+        currentStep.current += 1;
+        slowDownPointRef.current.x = lastPoint.x - (diffXRef.current * currentStep.current) / steps;
+        slowDownPointRef.current.y = lastPoint.y - (difYRef.current * currentStep.current) / steps;
+        const x = startPoint.x - slowDownPointRef.current.x;
+        const y = startPoint.y - slowDownPointRef.current.y;
+        const resultX = (x / 100) * 1.5707;
+        const resultY = (y / 100) * 1.0;
+
+        createAndPublishMessage(resultY * config.maxLinearSpeed, resultX * config.maxAngularSpeed);
+      } else {
+        if (nextCmdIntervalSlowDownId.current) {
+          clearInterval(nextCmdIntervalSlowDownId.current);
+          nextCmdIntervalSlowDownId.current = null;
+        }
+      }
+    }, interval);
+  }, [config.maxAngularSpeed, config.maxLinearSpeed, config.publishRate, config.slowDownTime, createAndPublishMessage]);
 
   const cmdMove = React.useCallback(() => {
     if (!nextCmdPt.current) {
@@ -246,6 +273,7 @@ function ExamplePanel({ context }: { context: PanelExtensionContext }): JSX.Elem
       if (nextCmdIntervalSlowDownId.current) {
         clearInterval(nextCmdIntervalSlowDownId.current);
       }
+      currentStep.current = 0;
     });
     // nipple_move
     nippleManagerRef.current.on("move", (_, data) => {
@@ -257,6 +285,8 @@ function ExamplePanel({ context }: { context: PanelExtensionContext }): JSX.Elem
       const resultY = (y / 100) * 1.0;
       nextCmdPt.current = [resultY, resultX];
       lastPointRef.current = data.position;
+      diffXRef.current = lastPointRef.current.x - startPointRef.current.x;
+      difYRef.current = lastPointRef.current.y - startPointRef.current.y;
     });
 
     // nipple_end
@@ -273,7 +303,7 @@ function ExamplePanel({ context }: { context: PanelExtensionContext }): JSX.Elem
 
   useEffect(() => {
     initNipple();
-  }, [initNipple]);
+  }, [initNipple, config]);
 
   useEffect(() => {
     const tree = buildSettingsTree(config, topics);
